@@ -11,8 +11,15 @@ function log(msg) {
 
 function run(cmd) {
     log(cmd);
-    return execSync(cmd, { stdio: "inherit" });
+    try {
+        return execSync(cmd, { stdio: "inherit" });
+    } catch (e) {
+        log(`Command failed: ${cmd}`);
+        if (e?.message) log(e.message);
+        throw e;
+    }
 }
+
 
 function safeWrite(path, content) {
     fs.mkdirSync(path.split("/").slice(0, -1).join("/"), { recursive: true });
@@ -120,17 +127,29 @@ function branchName(num) {
 
 function createBranchAndCommit(num, title) {
     const b = branchName(num);
-    run(`git checkout -b ${b}`);
+    run(`git checkout -B ${b}`);
+
     run(`git add -A`);
-    run(`git commit -m "Agent: ${title} (issue #${num})"`);
+    try {
+        run(`git commit -m "Agent: ${title} (issue #${num})"`);
+    } catch {
+        log("Nothing to commit, continuing.");
+    }
+
     run(`git push -u origin ${b}`);
     return b;
 }
 
 function openPR(repo, num, title, branch) {
-    // If a PR already exists, this will fail; that’s okay for a first iteration.
+    // If a PR already exists for this branch, skip
+    try {
+        sh(`gh pr view ${branch} -R ${repo} --json number -q .number`);
+        log("PR already exists for this branch, skipping PR creation.");
+        return;
+    } catch { }
+
     run(
-        `gh pr create -R ${repo} --head ${branch} --title "Agent: ${title}" --body "Auto-generated PR for issue #${num}.\n\n- Added/updated tests first\n- Applied fix\n- Ran tests\n" `
+        `gh pr create -R ${repo} --head ${branch} --title "Agent: ${title}" --body "Auto-generated PR for issue #${num}.\n\n- Added/updated tests first\n- Applied fix\n- Ran tests\n"`
     );
 }
 
