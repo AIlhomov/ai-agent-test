@@ -1,0 +1,35 @@
+name: Copilot Agent Loop
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+  schedule:
+    - cron: "*/10 * * * *" # every 10 minutes
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install (none needed, but keeps it standard)
+        run: npm ci || npm install
+
+      - name: Run agent
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          TRIGGER_LABEL: copilot
+        run: node scripts/agent.js
