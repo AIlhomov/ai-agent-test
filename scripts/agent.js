@@ -52,37 +52,36 @@ test("sub works", () => {
     );
 }
 
+
 function attemptFixFromIssueText(issueText) {
     const target = "test/utils.js";
-    if (!fs.existsSync(target)) {
-        throw new Error(`Missing ${target}`);
-    }
+    if (!fs.existsSync(target)) throw new Error(`Missing ${target}`);
 
     const src = fs.readFileSync(target, "utf8");
+    const lines = src.split(/\r?\n/);
 
-    // 1) Exact direct replace for your current repo (most reliable)
-    const directBefore = "export function sub(a, b) { return a + b }";
-    const directAfter = "export function sub(a, b) { return a - b }";
+    let changed = false;
 
-    let fixed = src;
-    if (fixed.includes(directBefore)) {
-        fixed = fixed.replace(directBefore, directAfter);
-    } else {
-        // 2) Fallback regex: allow optional semicolon + any spacing/newlines
-        fixed = fixed.replace(
-            /export function sub\s*\(\s*a\s*,\s*b\s*\)\s*\{\s*return\s*a\s*\+\s*b\s*;?\s*\}/g,
-            "export function sub(a, b) { return a - b }"
-        );
+    for (let i = 0; i < lines.length; i++) {
+        // If the line defines sub(...) and it contains "return a + b"
+        if (lines[i].includes("export function sub") && lines[i].includes("return a + b")) {
+            lines[i] = lines[i].replace("return a + b", "return a - b");
+            changed = true;
+        }
     }
 
-    if (fixed === src) {
-        log("No match for sub() fix. Leaving file unchanged.");
+    if (!changed) {
+        log("sub() fix did not match. Printing file for debugging:");
+        console.log("----- test/utils.js -----");
+        console.log(src);
+        console.log("-------------------------");
+        return;
     }
-    else {
-        log("Applied fix to sub().");
-        fs.writeFileSync(target, fixed);
-    }
+
+    fs.writeFileSync(target, lines.join("\n"));
+    log("Applied fix to sub().");
 }
+
 
 
 function testsPass() {
