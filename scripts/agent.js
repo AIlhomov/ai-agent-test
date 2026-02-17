@@ -45,30 +45,37 @@ test("sub works", () => {
 `
     );
 }
-
 function attemptFixFromIssueText(issueText) {
-    // Super simple “solver” for now:
-    // If it mentions sub() and utils.js, fix obvious bug pattern.
     const target = "test/utils.js";
     if (!fs.existsSync(target)) {
         throw new Error(`Missing ${target}`);
     }
+
     const src = fs.readFileSync(target, "utf8");
 
-    // Fix the common bug: sub returns a + b
-    // Keep it minimal and only adjust sub().
-    const fixed = src.replace(
-        /export function sub\s*\(\s*a\s*,\s*b\s*\)\s*\{\s*return\s*a\s*\+\s*b\s*;\s*\}/g,
-        "export function sub(a, b) { return a - b }"
-    );
+    // 1) Exact direct replace for your current repo (most reliable)
+    const directBefore = "export function sub(a, b) { return a + b }";
+    const directAfter = "export function sub(a, b) { return a - b }";
+
+    let fixed = src;
+    if (fixed.includes(directBefore)) {
+        fixed = fixed.replace(directBefore, directAfter);
+    } else {
+        // 2) Fallback regex: allow optional semicolon + any spacing/newlines
+        fixed = fixed.replace(
+            /export function sub\s*\(\s*a\s*,\s*b\s*\)\s*\{\s*return\s*a\s*\+\s*b\s*;?\s*\}/g,
+            "export function sub(a, b) { return a - b }"
+        );
+    }
 
     if (fixed === src) {
-        log("No direct pattern match. Leaving file unchanged (placeholder solver).");
+        log("No match for sub() fix. Leaving file unchanged.");
     } else {
         log("Applied fix to sub().");
         fs.writeFileSync(target, fixed);
     }
 }
+
 
 function testsPass() {
     try {
@@ -149,10 +156,16 @@ function main() {
     const issue = readIssue(repo, issueNumber);
     log(`Working on issue #${issueNumber}: ${issue.title}`);
 
+
+
     // Fresh branch from default branch
     run("git fetch origin");
     run("git checkout main || git checkout master");
     run("git pull");
+
+    run('git config user.name "github-actions[bot]"');
+    run('git config user.email "github-actions[bot]@users.noreply.github.com"');
+
 
     // Always tests first
     ensureTestsFirst();
