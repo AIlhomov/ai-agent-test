@@ -21,6 +21,80 @@ function run(cmd) {
 }
 
 
+function requireEnv(name) {
+    const v = process.env[name];
+    if (!v) throw new Error(`Missing required env var: ${name}`);
+    return v;
+}
+
+function runCapture(cmd) {
+    log(cmd);
+    try {
+        return execSync(cmd, { encoding: "utf8" });
+    } catch (e) {
+        const stdout = e?.stdout?.toString?.() ?? "";
+        const stderr = e?.stderr?.toString?.() ?? "";
+        return (stdout + "\n" + stderr).trim();
+    }
+}
+
+// Keep context small (free models have smaller limits)
+function readRepoContext() {
+    const files = [
+        "test/utils.js",
+        "test/utils.test.js",
+        "package.json",
+    ];
+
+    let out = "";
+    for (const f of files) {
+        if (!fs.existsSync(f)) continue;
+        out += `\n--- FILE: ${f} ---\n` + fs.readFileSync(f, "utf8") + "\n";
+    }
+    return out.trim();
+}
+
+function callOpenRouter(messages, model = "openrouter/free") {
+    const key = requireEnv("OPENROUTER_API_KEY");
+
+    const payload = {
+        model,
+        messages,
+        temperature: 0.2,
+    };
+
+    const cmd =
+        `curl -sS --fail-with-body https://openrouter.ai/api/v1/chat/completions ` +
+        `-H "Authorization: Bearer ${key}" ` +
+        `-H "Content-Type: application/json" ` +
+        `-H "X-Title: ai-agent-test" ` +
+        `--data '${JSON.stringify(payload)}'`;
+
+    const raw = sh(cmd);
+
+    let json;
+    try {
+        json = JSON.parse(raw);
+    } catch {
+        throw new Error(`OpenRouter returned non-JSON:\n${raw}`);
+    }
+
+    const text = json?.choices?.[0]?.message?.content;
+    if (!text) throw new Error(`OpenRouter empty response:\n${raw}`);
+    return text;
+}
+
+// We ask the model for a unified diff and apply it with git
+function applyUnifiedDiff(diffText) {
+    const m = diffText.match(/```diff\s*([\s\S]*?)```/);
+    const patch = (m ? m[1] : diffText).trim();
+
+    fs.writeFileSync("agent.patch", patch + "\n");
+    // --reject makes failures visible; --whitespace=nowarn avoids trivial whitespace issues
+    run("git apply --reject --whitespace=nowarn agent.patch");
+}
+
+
 function safeWrite(path, content) {
     fs.mkdirSync(path.split("/").slice(0, -1).join("/"), { recursive: true });
     fs.writeFileSync(path, content);
@@ -195,11 +269,71 @@ function main() {
 
     // Attempt 2 (one more iteration)
     if (!ok) {
-        log("Tests failed. Second attempt (single retry)...");
-        // Placeholder: you can plug in Copilot-based patching here later.
-        attemptFixFromIssueText(issue.title + "\n" + issue.body);
+        log("Tests failed. Asking OpenRouter for a patch...");
+
+        const testOutput = runCapture("npm test");
+        const context = readRepoContext();
+
+        const issueText = `${issue.title}\n\n${issue.body || ""}`.trim();
+
+        const messages = [
+            {
+                role: "system",
+                content:
+                    "You are an autonomous code-fixing agent. " +
+                    "Return ONLY a unified diff in a ```diff code block```. " +
+                    "Do not include explanations.",
+            },
+            {
+                role: "user",
+                content:
+                    `Issue:\n${issueText}\n\n` +
+                    `Test output:\n${testOutput}\n\n` +
+                    `Repo context:\n${context}\n\n` +
+                    `Task: Produce a minimal patch that makes tests pass.`,
+            },
+        ];
+
+        const diff = callOpenRouter(messages, "openrouter/free");
+        log("Applying patch from OpenRouter...");
+        applyUnifiedDiff(diff);
+
+        log("Re-running tests after AI patch...");
         ok = testsPass();
     }
+
+    if (!ok) {
+        log("AI patch didn't pass tests. One retry with updated output...");
+
+        const testOutput2 = runCapture("npm test");
+        const context2 = readRepoContext();
+        const issueText = `${issue.title}\n\n${issue.body || ""}`.trim();
+
+        const messages2 = [
+            {
+                role: "system",
+                content:
+                    "Return ONLY a unified diff in a ```diff code block```. " +
+                    "Fix the remaining failing tests. Minimal changes.",
+            },
+            {
+                role: "user",
+                content:
+                    `Issue:\n${issueText}\n\n` +
+                    `New test output:\n${testOutput2}\n\n` +
+                    `Repo context:\n${context2}\n\n` +
+                    `Patch the repo so tests pass.`,
+            },
+        ];
+
+        const diff2 = callOpenRouter(messages2, "openrouter/free");
+        log("Applying retry patch...");
+        applyUnifiedDiff(diff2);
+
+        ok = testsPass();
+    }
+
+
 
     if (!ok) {
         throw new Error("Tests still failing after one retry. Stopping.");
