@@ -1,0 +1,34 @@
+
+name: Smoke Push
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Make a tiny change
+        run: |
+          echo "$(date -u) smoke" >> .smoke-log.txt
+
+      - name: Commit
+        run: |
+          git add .smoke-log.txt
+          git commit -m "chore: smoke push"
+
+      - name: Push to new branch
+        run: |
+          BR="smoke/$(date +%s)"
+          git switch -c "$BR"
+          git push -u origin "$BR"
