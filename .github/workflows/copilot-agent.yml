@@ -5,7 +5,7 @@ on:
     types: [labeled]
   workflow_dispatch:
   schedule:
-    - cron: "*/10 * * * *" # every 10 minutes
+    - cron: "*/1 * * * *" # every minute
 
 permissions:
   contents: write
