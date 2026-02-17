@@ -20,7 +20,6 @@ function safeWrite(path, content) {
 }
 
 function ensureTestsFirst() {
-    // If no tests exist, create one for utils.js.
     const testPath = "test/utils.test.js";
     if (fs.existsSync(testPath)) {
         log("Tests already exist.");
@@ -38,10 +37,14 @@ test("add works", () => {
   assert.equal(add(5, 2), 7);
 });
 
-
+test("sub works", () => {
+  assert.equal(sub(5, 2), 3);
+  assert.equal(sub(2, 5), -3);
+});
 `
     );
 }
+
 function attemptFixFromIssueText(issueText) {
     const target = "test/utils.js";
     if (!fs.existsSync(target)) {
@@ -67,7 +70,8 @@ function attemptFixFromIssueText(issueText) {
 
     if (fixed === src) {
         log("No match for sub() fix. Leaving file unchanged.");
-    } else {
+    }
+    else {
         log("Applied fix to sub().");
         fs.writeFileSync(target, fixed);
     }
