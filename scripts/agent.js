@@ -269,9 +269,9 @@ function openPR(repo, num, title, branch) {
         return;
     } catch { }
 
-    run(
-        `gh pr create -R ${repo} --head ${branch} --title "Agent: ${title}" --body "Auto-generated PR for issue #${num}.\n\n- Added/updated tests first\n- Applied fix\n- Ran tests\n"`
-    );
+    const prBody = `Auto-generated PR for issue #${num}.\n\n- Generated tests first\n- Applied fix via Claude\n- Tests passing\n`;
+    fs.writeFileSync("pr_body.txt", prBody);
+    run(`gh pr create -R ${repo} --head ${branch} --title "Agent: ${title}" --body-file pr_body.txt`);
 }
 
 function main() {
