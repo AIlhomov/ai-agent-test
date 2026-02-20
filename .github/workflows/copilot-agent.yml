@@ -11,6 +11,8 @@ permissions:
   contents: write
   pull-requests: write
   issues: read
+env:
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
 jobs:
   agent:
@@ -32,4 +34,6 @@ jobs:
           REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           TRIGGER_LABEL: copilot
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: node scripts/agent.js
+

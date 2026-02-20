@@ -54,33 +54,39 @@ function readRepoContext() {
     return out.trim();
 }
 
-function callOpenRouter(messages, model = "openrouter/free") {
-    const key = requireEnv("OPENROUTER_API_KEY");
+function callClaude(messages, model = "claude-sonnet-4-6") {
+    requireEnv("ANTHROPIC_API_KEY"); // validate it exists early
 
-    const payload = {
-        model,
-        messages,
-        temperature: 0.2,
-    };
+    // Anthropic API has a top-level system field, not a message role
+    let system;
+    const userMessages = messages.filter(m => {
+        if (m.role === "system") { system = m.content; return false; }
+        return true;
+    });
 
-    const cmd =
-        `curl -sS --fail-with-body https://openrouter.ai/api/v1/chat/completions ` +
-        `-H "Authorization: Bearer ${key}" ` +
-        `-H "Content-Type: application/json" ` +
-        `-H "X-Title: ai-agent-test" ` +
-        `--data '${JSON.stringify(payload)}'`;
+    const payload = { model, max_tokens: 2048, messages: userMessages };
+    if (system) payload.system = system;
 
-    const raw = sh(cmd);
+    // Write payload to file so the key never appears in the command string
+    fs.writeFileSync("agent_payload.json", JSON.stringify(payload));
+
+    const raw = sh(
+        `curl -sS --fail-with-body https://api.anthropic.com/v1/messages ` +
+        `-H "x-api-key: $ANTHROPIC_API_KEY" ` +
+        `-H "anthropic-version: 2023-06-01" ` +
+        `-H "content-type: application/json" ` +
+        `--data @agent_payload.json`
+    );
 
     let json;
     try {
         json = JSON.parse(raw);
     } catch {
-        throw new Error(`OpenRouter returned non-JSON:\n${raw}`);
+        throw new Error(`Anthropic API returned non-JSON:\n${raw}`);
     }
 
-    const text = json?.choices?.[0]?.message?.content;
-    if (!text) throw new Error(`OpenRouter empty response:\n${raw}`);
+    const text = json?.content?.[0]?.text;
+    if (!text) throw new Error(`Anthropic API empty response:\n${raw}`);
     return text;
 }
 
@@ -269,7 +275,7 @@ function main() {
 
     // Attempt 2 (one more iteration)
     if (!ok) {
-        log("Tests failed. Asking OpenRouter for a patch...");
+        log("Tests failed. Asking Claude for a patch...");
 
         const testOutput = runCapture("npm test");
         const context = readRepoContext();
@@ -294,7 +300,7 @@ function main() {
             },
         ];
 
-        const diff = callOpenRouter(messages, "openrouter/free");
+        const diff = callClaude(messages);
         log("Applying patch from OpenRouter...");
         applyUnifiedDiff(diff);
 
@@ -326,7 +332,7 @@ function main() {
             },
         ];
 
-        const diff2 = callOpenRouter(messages2, "openrouter/free");
+        const diff2 = callClaude(messages2);
         log("Applying retry patch...");
         applyUnifiedDiff(diff2);
 
