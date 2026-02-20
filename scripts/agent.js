@@ -89,14 +89,30 @@ function callClaude(messages, model = "claude-sonnet-4-6") {
     return text;
 }
 
-// We ask the model for a unified diff and apply it with git
-function applyUnifiedDiff(diffText) {
-    const m = diffText.match(/```diff\s*([\s\S]*?)```/);
-    const patch = (m ? m[1] : diffText).trim();
+// Ask Claude to return complete fixed files; parse and write them directly.
+// Format expected: === FILE: path === ... === END ===
+function applyFixedFiles(response) {
+    const pattern = /===\s*FILE:\s*(.+?)\s*===\n([\s\S]*?)\n===\s*END\s*===/g;
+    let match;
+    let applied = false;
 
-    fs.writeFileSync("agent.patch", patch + "\n");
-    // --reject makes failures visible; --whitespace=nowarn avoids trivial whitespace issues
-    run("git apply --reject --whitespace=nowarn agent.patch");
+    while ((match = pattern.exec(response)) !== null) {
+        const filePath = match[1].trim();
+        const content = match[2];
+        if (!fs.existsSync(filePath)) {
+            log(`Skipping unknown file: ${filePath}`);
+            continue;
+        }
+        fs.writeFileSync(filePath, content + "\n");
+        log(`Rewrote ${filePath}`);
+        applied = true;
+    }
+
+    if (!applied) {
+        throw new Error(
+            `Could not parse fixed files from Claude response.\nResponse was:\n${response}`
+        );
+    }
 }
 
 
@@ -241,7 +257,7 @@ function createBranchAndCommit(num, title) {
         log("Nothing to commit, continuing.");
     }
 
-    run(`git push -u origin ${b}`);
+    run(`git push --force-with-lease -u origin ${b}`);
     return b;
 }
 
@@ -313,8 +329,12 @@ function main() {
                 role: "system",
                 content:
                     "You are an autonomous code-fixing agent. " +
-                    "Return ONLY a unified diff in a ```diff code block```. " +
-                    "Do not include explanations.",
+                    "Return the complete fixed content for every file that needs changes. " +
+                    "For each file use exactly this format:\n" +
+                    "=== FILE: path/to/file ===\n" +
+                    "<complete file content>\n" +
+                    "=== END ===\n" +
+                    "No explanations. No markdown fences.",
             },
             {
                 role: "user",
@@ -322,13 +342,13 @@ function main() {
                     `Issue:\n${issueText}\n\n` +
                     `Test output:\n${testOutput}\n\n` +
                     `Repo context:\n${context}\n\n` +
-                    `Task: Produce a minimal patch that makes tests pass.`,
+                    `Return the complete fixed file(s) so tests pass.`,
             },
         ];
 
-        const diff = callClaude(messages);
-        log("Applying patch from OpenRouter...");
-        applyUnifiedDiff(diff);
+        const response = callClaude(messages);
+        log("Applying fix from Claude...");
+        applyFixedFiles(response);
 
         log("Re-running tests after AI patch...");
         ok = testsPass();
@@ -345,8 +365,13 @@ function main() {
             {
                 role: "system",
                 content:
-                    "Return ONLY a unified diff in a ```diff code block```. " +
-                    "Fix the remaining failing tests. Minimal changes.",
+                    "You are an autonomous code-fixing agent. " +
+                    "Return the complete fixed content for every file that still needs changes. " +
+                    "For each file use exactly this format:\n" +
+                    "=== FILE: path/to/file ===\n" +
+                    "<complete file content>\n" +
+                    "=== END ===\n" +
+                    "No explanations. No markdown fences.",
             },
             {
                 role: "user",
@@ -354,13 +379,13 @@ function main() {
                     `Issue:\n${issueText}\n\n` +
                     `New test output:\n${testOutput2}\n\n` +
                     `Repo context:\n${context2}\n\n` +
-                    `Patch the repo so tests pass.`,
+                    `Return the complete fixed file(s) so all tests pass.`,
             },
         ];
 
-        const diff2 = callClaude(messages2);
-        log("Applying retry patch...");
-        applyUnifiedDiff(diff2);
+        const response2 = callClaude(messages2);
+        log("Applying retry fix from Claude...");
+        applyFixedFiles(response2);
 
         ok = testsPass();
     }
