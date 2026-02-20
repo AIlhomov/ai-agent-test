@@ -38,18 +38,17 @@ function runCapture(cmd) {
     }
 }
 
-// Keep context small (free models have smaller limits)
 function readRepoContext() {
-    const files = [
-        "test/utils.js",
-        "test/utils.test.js",
-        "package.json",
-    ];
-
     let out = "";
-    for (const f of files) {
-        if (!fs.existsSync(f)) continue;
-        out += `\n--- FILE: ${f} ---\n` + fs.readFileSync(f, "utf8") + "\n";
+    if (fs.existsSync("test")) {
+        for (const f of fs.readdirSync("test").sort()) {
+            if (!f.endsWith(".js")) continue;
+            const filePath = `test/${f}`;
+            out += `\n--- FILE: ${filePath} ---\n` + fs.readFileSync(filePath, "utf8") + "\n";
+        }
+    }
+    if (fs.existsSync("package.json")) {
+        out += `\n--- FILE: package.json ---\n` + fs.readFileSync("package.json", "utf8") + "\n";
     }
     return out.trim();
 }
@@ -106,30 +105,57 @@ function safeWrite(path, content) {
     fs.writeFileSync(path, content);
 }
 
-function ensureTestsFirst() {
-    const testPath = "test/utils.test.js";
-    if (fs.existsSync(testPath)) {
-        log("Tests already exist.");
+function ensureTestsFirst(issue) {
+    if (!fs.existsSync("test")) {
+        log("No test/ directory found, skipping test generation.");
         return;
     }
 
-    log("Creating tests first...");
-    safeWrite(
-        testPath,
-        `import test from "node:test";
-import assert from "node:assert/strict";
-import { add, sub } from "./utils.js";
+    const sourceFiles = fs.readdirSync("test")
+        .filter(f => f.endsWith(".js") && !f.endsWith(".test.js"));
 
-test("add works", () => {
-  assert.equal(add(5, 2), 7);
-});
-
-test("sub works", () => {
-  assert.equal(sub(5, 2), 3);
-  assert.equal(sub(2, 5), -3);
-});
-`
+    const missingTests = sourceFiles.filter(
+        f => !fs.existsSync(`test/${f.replace(".js", ".test.js")}`)
     );
+
+    if (missingTests.length === 0) {
+        log("All source files already have tests.");
+        return;
+    }
+
+    log(`Generating tests with Claude for: ${missingTests.join(", ")}`);
+
+    for (const srcFile of missingTests) {
+        const srcPath = `test/${srcFile}`;
+        const testPath = `test/${srcFile.replace(".js", ".test.js")}`;
+        const src = fs.readFileSync(srcPath, "utf8");
+        const issueText = `${issue.title}\n\n${issue.body || ""}`.trim();
+
+        const messages = [
+            {
+                role: "system",
+                content:
+                    "You are a test-writing agent for Node.js. " +
+                    "Write tests using node:test and node:assert/strict. " +
+                    "Return ONLY the test file content. No explanations. No markdown fences.",
+            },
+            {
+                role: "user",
+                content:
+                    `Issue:\n${issueText}\n\n` +
+                    `Source file (${srcPath}):\n${src}\n\n` +
+                    `Write a test file that tests the CORRECT expected behavior. ` +
+                    `Import from "./${srcFile}". Use node:test and node:assert/strict.`,
+            },
+        ];
+
+        const testCode = callClaude(messages);
+        const m = testCode.match(/```(?:js|javascript)?\s*([\s\S]*?)```/);
+        const code = (m ? m[1] : testCode).trim();
+
+        safeWrite(testPath, code + "\n");
+        log(`Tests written to ${testPath}`);
+    }
 }
 
 
@@ -267,7 +293,7 @@ function main() {
 
 
     // Always tests first
-    ensureTestsFirst();
+    ensureTestsFirst(issue);
 
     // Attempt 1
     attemptFixFromIssueText(issue.title + "\n" + issue.body);
